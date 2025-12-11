@@ -133,9 +133,9 @@
             <h3 style="margin:0 0 8px;font-size:14px">If STOP is hit</h3>
             <div class="info"><div class="label">Adverse move (pts)</div><div id="movePoints" class="value"></div></div>
             <div class="info"><div class="label">Simulated avg delta</div><div id="avgDelta" class="value"></div></div>
-            <div class="info"><div class="label">Premium loss (per unit)</div><div id="premLoss" class="value"></div></div>
+            <div class="info"><div class="label">Premium change from move (per unit)</div><div id="premLoss" class="value"></div></div>
             <div class="info"><div class="label">Theta loss (per unit)</div><div id="thetaLoss" class="value"></div></div>
-            <div class="info"><div class="label">Final premium (per unit)</div><div id="finalPremium" class="value"></div></div>
+            <div class="info"><div class="label">Estimated premium at STOP (per unit)</div><div id="estPremiumStop" class="value"></div></div>
             <div class="info"><div class="label">Loss per unit</div><div id="lossPerUnit" class="value danger"></div></div>
           </div>
 
@@ -143,9 +143,9 @@
             <h3 style="margin:0 0 8px;font-size:14px">If TARGET is hit</h3>
             <div class="info"><div class="label">Favourable move (pts)</div><div id="movePointsT" class="value"></div></div>
             <div class="info"><div class="label">Simulated avg delta (target)</div><div id="avgDeltaT" class="value"></div></div>
-            <div class="info"><div class="label">Premium gain (per unit)</div><div id="premGain" class="value profit"></div></div>
+            <div class="info"><div class="label">Premium change from move (per unit)</div><div id="premGain" class="value profit"></div></div>
             <div class="info"><div class="label">Theta loss (per unit)</div><div id="thetaLossT" class="value"></div></div>
-            <div class="info"><div class="label">Final premium (per unit)</div><div id="finalPremiumT" class="value"></div></div>
+            <div class="info"><div class="label">Estimated premium at TARGET (per unit)</div><div id="estPremiumTarget" class="value"></div></div>
             <div class="info"><div class="label">Profit per unit</div><div id="profitPerUnit" class="value profit"></div></div>
           </div>
         </div>
@@ -179,13 +179,8 @@
   function fmt(n){ return (isNaN(n) || !isFinite(n)) ? '-' : Number(n.toFixed(2)).toLocaleString(); }
 
   // simulate move point-by-point (or stepSize) and return:
-  // {avgDelta, totalPremiumChange} where totalPremiumChange is positive for favourable move (gain) and positive for adverse (loss) depending on sign usage
+  // {avgDelta, premiumChange} where premiumChange may be positive or negative depending on direction sign
   function simulateDeltaMove(delta0, gamma, M, stepSize, direction /* +1 for favourable increase, -1 for adverse decrease for calls, reverse for puts */) {
-    // We'll simulate M points in increments of stepSize.
-    // direction = +1 means price moves in profitable direction for long (call up, put down)
-    // For each small step, delta changes by gamma * stepSize in the SAME sign as direction (delta increases when price moves toward ITM)
-    // We'll approximate premium change by summing delta_at_step * stepSize across steps.
-    // For adverse moves (direction = -1), delta will reduce each step: delta += gamma * (direction * stepSize)
     if (M <= 0) return { avgDelta: delta0, premiumChange: 0 };
 
     const steps = Math.max(1, Math.ceil(Math.abs(M) / Math.abs(stepSize)));
@@ -193,22 +188,13 @@
     let delta = delta0;
     let sumPremiumChange = 0;
 
-    // simulate progressively: at each step, premium changes by (delta * actualStep * sign)
-    // and delta is updated by gamma * actualStep * direction
     for (let i = 0; i < steps; i++) {
-      // premium change during this tiny move:
-      // if direction is +1 (favourable for long call), premium increases by delta * actualStep
-      // if direction is -1 (adverse for long call), premium decreases by delta * actualStep (we'll keep sign consistent)
       sumPremiumChange += delta * actualStep * direction;
-      // update delta for next tiny move (delta increases if move towards ITM)
       delta = delta + gamma * actualStep * direction;
-      // clamp delta to sensible range [-1, 1]
       delta = clamp(delta, -1, 1);
     }
 
-    // average delta over the move:
     const avgDelta = Math.abs(sumPremiumChange) / Math.abs(M) || Math.abs((delta + delta0) / 2);
-    // premiumChange will be positive for favourable move (gain), negative for adverse (loss) depending on direction
     return { avgDelta: avgDelta, premiumChange: sumPremiumChange };
   }
 
@@ -280,11 +266,8 @@
     // ---- STOP simulation ----
     let finalPremiumStop = null, lossPerUnit = null, avgDeltaStop = null, premLossFromMove = null;
     if (M_stop > 0){
-      // For stop (adverse move), direction = -callSign
-      const dir = -callSign;
-      // simulate M_stop with stepSize
+      const dir = -callSign; // adverse direction
       const sim = simulateDeltaMove(delta, gamma, M_stop, stepSize, dir);
-      // sim.premiumChange will be NEGATIVE for adverse move in sign convention; we take absolute as loss
       premLossFromMove = Math.abs(sim.premiumChange);
       avgDeltaStop = sim.avgDelta;
       finalPremiumStop = optPremium - premLossFromMove - thetaLoss;
@@ -315,9 +298,9 @@
     // Render STOP
     $('movePoints').textContent = fmt(M_stop);
     $('avgDelta').textContent = fmt(avgDeltaStop);
-    $('premLoss').textContent = fmt(premLossFromMove);
+    $('premLoss').textContent = premLossFromMove ? fmt(premLossFromMove) : '-';
     $('thetaLoss').textContent = fmt(thetaLoss);
-    $('finalPremium').textContent = finalPremiumStop ? ('₹ ' + fmt(finalPremiumStop)) : '-';
+    $('estPremiumStop').textContent = finalPremiumStop !== null ? ('₹ ' + fmt(finalPremiumStop)) : '-';
     $('lossPerUnit').textContent = lossPerUnit ? ('₹ ' + fmt(lossPerUnit)) : '-';
 
     // Render TARGET
@@ -325,7 +308,7 @@
     $('avgDeltaT').textContent = fmt(avgDeltaT);
     $('premGain').textContent = premGainFromMove ? fmt(premGainFromMove) : '-';
     $('thetaLossT').textContent = fmt(thetaLoss);
-    $('finalPremiumT').textContent = finalPremiumT ? ('₹ ' + fmt(finalPremiumT)) : '-';
+    $('estPremiumTarget').textContent = finalPremiumT !== null ? ('₹ ' + fmt(finalPremiumT)) : '-';
     $('profitPerUnit').textContent = profitPerUnit ? ('₹ ' + fmt(profitPerUnit)) : '-';
 
     // Position totals
